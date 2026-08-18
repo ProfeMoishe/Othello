@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Othello - IPET 249 Nicolás Copérnico</title>
+    <style>
+        /* ================================================================
+           ESTILOS GLOBALES
+           - Fondo bordo oscuro (color institucional).
+           - Centrado vertical y horizontal del canvas.
+           - Sombra y borde para darle un aspecto cuidado.
+           ================================================================ */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: #3A0A0F;   /* bordo muy oscuro */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #game-container {
+            background-color: #6B0F1E;   /* bordo más claro para el contenedor */
+            padding: 20px 20px 20px 20px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+            border: 3px solid #F5C718;   /* amarillo institucional */
+        }
+
+        canvas {
+            display: block;
+            margin: 0 auto;
+            border-radius: 12px;
+            background-color: #E8E0D0;   /* crema / amarillo pálido */
+            box-shadow: inset 0 0 0 2px #F5C718;
+            cursor: pointer;
+            width: 100%;
+            height: auto;
+            max-width: 700px;            /* para que no se estire demasiado */
+            aspect-ratio: 560 / 640;     /* relación ancho/alto */
+        }
+
+        /* Pie de página opcional con créditos */
+        .footer {
+            text-align: center;
+            color: #F5C718;
+            margin-top: 12px;
+            font-size: 0.9rem;
+            letter-spacing: 1px;
+        }
+
+        .footer a {
+            color: #FFFFFF;
+            text-decoration: none;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas" width="560" height="640"></canvas>
+        <div class="footer">
+            IPET 249 · Nicolás Copérnico · Laboratorio de Programación 2026
+        </div>
+    </div>
+
+    <script>
+        // =====================================================================
+        // 1.  CONSTANTES DEL JUEGO  (tweakea aquí para cambiar el aspecto)
+        // =====================================================================
+
+        // ---- Tamaño del tablero ----------------------------------------------
+        const BOARD_SIZE = 8;               // 8x8 es el clásico
+        const SQUARE_SIZE = 70;             // píxeles por celda
+        const GRID_LINE_WIDTH = 2;          // grosor de las líneas
+        const DISC_PADDING = 6;             // espacio entre borde de celda y disco
+        const STATUS_BAR_HEIGHT = 80;        // altura de la barra inferior
+
+        // ---- Dimensiones derivadas ------------------------------------------
+        const BOARD_PIXELS = BOARD_SIZE * SQUARE_SIZE;
+        const CANVAS_WIDTH = BOARD_PIXELS;
+        const CANVAS_HEIGHT = BOARD_PIXELS + STATUS_BAR_HEIGHT;
+
+        // ---- Colores institucionales del IPET 249 ----------------------------
+        const COLOR_BORDO = '#6B0F1E';
+        const COLOR_BORDO_OSCURO = '#3A0A0F';
+        const COLOR_AMARILLO = '#F5C718';
+        const COLOR_ROJO = '#C41230';
+        const COLOR_BLANCO = '#FFFFFF';
+
+        // ---- Colores del tablero ---------------------------------------------
+        const BOARD_COLOR = '#E8E0D0';        // crema / amarillo pálido
+        const GRID_COLOR = COLOR_BORDO;       // líneas en bordo
+
+        // ---- Colores de los discos -------------------------------------------
+        const BLACK_DISC_COLOR = '#1A1A1A';
+        const WHITE_DISC_COLOR = '#F0F0EB';
+        const DISC_OUTLINE_COLOR = '#222222';
+        const DISC_OUTLINE_WIDTH = 2;
+
+        // ---- Colores de ayudas visuales --------------------------------------
+        const HINT_COLOR = 'rgba(245, 199, 24, 0.6)';  // amarillo translúcido
+        const HOVER_COLOR = 'rgba(196, 18, 48, 0.3)';  // rojo translúcido
+
+        // ---- Texto -----------------------------------------------------------
+        const TEXT_COLOR = COLOR_AMARILLO;
+        const FONT_SIZE = 22;
+
+        // ---- Toggles ---------------------------------------------------------
+        const SHOW_HINTS_BY_DEFAULT = true;
+        const USE_STANDARD_OPENING = true;
+
+        // ---- Identificadores de celdas ---------------------------------------
+        const EMPTY = 0;
+        const BLACK = 1;
+        const WHITE = 2;
+
+        // ---- Direcciones (8 vecinos) -----------------------------------------
+        const DIRECTIONS = [
+            [-1, -1], [-1, 0], [-1, 1],
+            [0, -1], [0, 1],
+            [1, -1], [1, 0], [1, 1]
+        ];
+
+        // =====================================================================
+        // 2.  VARIABLES DE ESTADO DEL JUEGO
+        // =====================================================================
+
+        let board = [];                 // matriz 2D (board[row][col])
+        let currentPlayer = BLACK;      // negro comienza
+        let showHints = SHOW_HINTS_BY_DEFAULT;
+        let gameOver = false;
+        let winnerText = '';
+        let legalMoves = [];            // lista de objetos {row, col}
+
+        // ---- Interacción con el mouse ---------------------------------------
+        let mouseX = -1;
+        let mouseY = -1;                // coordenadas en píxeles (canvas)
+        let hoverRow = -1;
+        let hoverCol = -1;              // celda bajo el cursor (si existe)
+
+        // ---- Referencia al canvas y su contexto -----------------------------
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // ---- Ajustar tamaño real del canvas según CSS -----------------------
+        // (ya tiene width/height fijos, pero si queremos escalado, se maneja con CSS)
+
+        // =====================================================================
+        // 3.  LÓGICA DEL TABLERO  (pura lógica, sin dibujo)
+        // =====================================================================
+
+        /**
+         * Crea un tablero nuevo con las cuatro fichas centrales.
+         * @returns {number[][]} Tablero vacío con la apertura estándar.
+         */
+        function createInitialBoard() {
+            const b = Array.from({ length: BOARD_SIZE }, () =>
+                Array(BOARD_SIZE).fill(EMPTY)
+            );
+
+            if (USE_STANDARD_OPENING) {
+                const mid = BOARD_SIZE / 2;
+                b[mid - 1][mid - 1] = WHITE;
+                b[mid - 1][mid] = BLACK;
+                b[mid][mid - 1] = BLACK;
+                b[mid][mid] = WHITE;
+            }
+            return b;
+        }
+
+        /**
+         * Devuelve el color opuesto al jugador dado.
+         * @param {number} player - BLACK o WHITE
+         * @returns {number} WHITE si player era BLACK, viceversa.
+         */
+        function opponentOf(player) {
+            return player === BLACK ? WHITE : BLACK;
+        }
+
+        /**
+         * Comprueba si (row, col) está dentro del tablero.
+         */
+        function inBounds(row, col) {
+            return row >= 0 && row < BOARD_SIZE && col >= 0 && col < BOARD_SIZE;
+        }
+
+        /**
+         * Calcula todas las posiciones que se voltearían si `player` coloca
+         * una ficha en (row, col). Si la jugada es ilegal, devuelve [].
+         * @param {number[][]} board - estado actual del tablero
+         * @param {number} row - fila destino
+         * @param {number} col - columna destino
+         * @param {number} player - BLACK o WHITE
+         * @returns {Array<{row, col}>} Lista de celdas a voltear.
+         */
+        function discsFlippedByMove(board, row, col, player) {
+            if (board[row][col] !== EMPTY) return [];
+
+            const other = opponentOf(player);
+            const allFlips = [];
+
+            for (const [dRow, dCol] of DIRECTIONS) {
+                let r = row + dRow;
+                let c = col + dCol;
+                const potential = [];
+
+                while (inBounds(r, c) && board[r][c] === other) {
+                    potential.push({ row: r, col: c });
+                    r += dRow;
+                    c += dCol;
+                }
+
+                // Si la caminata terminó en una ficha propia, se capturan
+                if (potential.length > 0 && inBounds(r, c) && board[r][c] === player) {
+                    allFlips.push(...potential);
+                }
+            }
+
+            return allFlips;
+        }
+
+        /**
+         * Determina si una jugada es legal (voltea al menos una ficha).
+         */
+        function isLegalMove(board, row, col, player) {
+            return discsFlippedByMove(board, row, col, player).length > 0;
+        }
+
+        /**
+         * Devuelve un array con todas las jugadas legales para `player`.
+         * @param {number[][]} board
+         * @param {number} player
+         * @returns {Array<{row, col}>}
+         */
+        function findAllLegalMoves(board, player) {
+            const moves = [];
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    if (isLegalMove(board, r, c, player)) {
+                        moves.push({ row: r, col: c });
+                    }
+                }
+            }
+            return moves;
+        }
+
+        /**
+         * Aplica una jugada (asume que es legal): coloca la ficha y voltea.
+         */
+        function applyMove(board, row, col, player) {
+            const flips = discsFlippedByMove(board, row, col, player);
+            board[row][col] = player;
+            for (const pos of flips) {
+                board[pos.row][pos.col] = player;
+            }
+        }
+
+        /**
+         * Cuenta las fichas negras y blancas.
+         * @returns {{black: number, white: number}}
+         */
+        function countDiscs(board) {
+            let black = 0,
+                white = 0;
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    if (board[r][c] === BLACK) black++;
+                    else if (board[r][c] === WHITE) white++;
+                }
+            }
+            return { black, white };
+        }
+
+        // =====================================================================
+        // 4.  FUNCIONES DE DIBUJO  (todo el renderizado en canvas)
+        // =====================================================================
+
+        /**
+         * Dibuja el fondo del tablero (color base + líneas de la cuadrícula).
+         */
+        function drawBoardBackground() {
+            // Fondo del tablero
+            ctx.fillStyle = BOARD_COLOR;
+            ctx.fillRect(0, 0, BOARD_PIXELS, BOARD_PIXELS);
+
+            // Líneas verticales
+            ctx.strokeStyle = GRID_COLOR;
+            ctx.lineWidth = GRID_LINE_WIDTH;
+            for (let c = 0; c <= BOARD_SIZE; c++) {
+                const x = c * SQUARE_SIZE;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, BOARD_PIXELS);
+                ctx.stroke();
+            }
+
+            // Líneas horizontales
+            for (let r = 0; r <= BOARD_SIZE; r++) {
+                const y = r * SQUARE_SIZE;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(BOARD_PIXELS, y);
+                ctx.stroke();
+            }
+        }
+
+        /**
+         * Dibuja todas las fichas (discos) sobre el tablero.
+         */
+        function drawDiscs() {
+            const radius = SQUARE_SIZE / 2 - DISC_PADDING;
+
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    const cell = board[r][c];
+                    if (cell === EMPTY) continue;
+
+                    const cx = c * SQUARE_SIZE + SQUARE_SIZE / 2;
+                    const cy = r * SQUARE_SIZE + SQUARE_SIZE / 2;
+
+                    // Color del disco
+                    const color = cell === BLACK ? BLACK_DISC_COLOR : WHITE_DISC_COLOR;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+                    ctx.fillStyle = color;
+                    ctx.fill();
+
+                    // Borde del disco
+                    ctx.lineWidth = DISC_OUTLINE_WIDTH;
+                    ctx.strokeStyle = DISC_OUTLINE_COLOR;
+                    ctx.stroke();
+                }
+            }
+        }
+
+        /**
+         * Dibuja pequeños puntos translúcidos en las casillas donde el jugador
+         * actual puede mover (si `showHints` está activado).
+         */
+        function drawHints() {
+            if (!showHints || gameOver) return;
+
+            const hintRadius = SQUARE_SIZE / 8;
+
+            for (const move of legalMoves) {
+                const cx = move.col * SQUARE_SIZE + SQUARE_SIZE / 2;
+                const cy = move.row * SQUARE_SIZE + SQUARE_SIZE / 2;
+
+                ctx.beginPath();
+                ctx.arc(cx, cy, hintRadius, 0, Math.PI * 2);
+                ctx.fillStyle = HINT_COLOR;
+                ctx.fill();
+            }
+        }
+
+        /**
+         * Resalta la celda bajo el cursor si es una jugada legal.
+         */
+        function drawHoverHighlight() {
+            if (gameOver) return;
+            if (hoverRow === -1 || hoverCol === -1) return;
+
+            // Comprobar si la celda está en legalMoves
+            const isLegal = legalMoves.some(m => m.row === hoverRow && m.col === hoverCol);
+            if (!isLegal) return;
+
+            const x = hoverCol * SQUARE_SIZE;
+            const y = hoverRow * SQUARE_SIZE;
+
+            ctx.fillStyle = HOVER_COLOR;
+            ctx.fillRect(x, y, SQUARE_SIZE, SQUARE_SIZE);
+        }
+
+        /**
+         * Dibuja la barra de estado inferior: marcador, turno, ganador y escudo.
+         */
+        function drawStatusBar() {
+            const yStart = BOARD_PIXELS;
+            const height = STATUS_BAR_HEIGHT;
+
+            // Fondo bordo oscuro con borde amarillo
+            ctx.fillStyle = COLOR_BORDO_OSCURO;
+            ctx.fillRect(0, yStart, CANVAS_WIDTH, height);
+            ctx.strokeStyle = COLOR_AMARILLO;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(0, yStart, CANVAS_WIDTH, height);
+
+            // ---- Escudo del colegio (a la izquierda) -------------------------
+            drawSchoolCrest(10, yStart + 10, 60, 60);
+
+            // ---- Texto central ----------------------------------------------
+            const { black, white } = countDiscs(board);
+
+            let mainText = '';
+            if (gameOver) {
+                mainText = winnerText;
+            } else {
+                const turnName = currentPlayer === BLACK ? 'Negras' : 'Blancas';
+                mainText = `Turno: ${turnName}`;
+            }
+
+            const scoreText = `● ${black}   ○ ${white}`;
+
+            // Configurar fuente
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = `bold ${FONT_SIZE}px 'Segoe UI', sans-serif`;
+            ctx.fillStyle = TEXT_COLOR;
+
+            // Línea principal (turno o ganador)
+            const centerX = CANVAS_WIDTH / 2;
+            const line1Y = yStart + height / 3;
+            const line2Y = yStart + 2 * height / 3;
+
+            ctx.fillText(mainText, centerX, line1Y);
+
+            // Puntuación (con círculos de color)
+            ctx.font = `${FONT_SIZE}px 'Segoe UI', sans-serif`;
+            ctx.fillText(scoreText, centerX, line2Y);
+
+            // Pequeño detalle: nombre del colegio a la derecha
+            ctx.textAlign = 'right';
+            ctx.font = '14px sans-serif';
+            ctx.fillStyle = COLOR_AMARILLO;
+            ctx.fillText('IPET 249', CANVAS_WIDTH - 15, yStart + height - 10);
+        }
+
+        /**
+         * Dibuja un escudo estilizado del IPET 249 Nicolás Copérnico.
+         * @param {number} x - coordenada x superior izquierda
+         * @param {number} y - coordenada y superior izquierda
+         * @param {number} w - ancho
+         * @param {number} h - alto
+         */
+        function drawSchoolCrest(x, y, w, h) {
+            // Fondo del escudo: rectángulo redondeado con borde amarillo
+            const radius = 8;
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + w - radius, y);
+            ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+            ctx.lineTo(x + w, y + h - radius);
+            ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+            ctx.lineTo(x + radius, y + h);
+            ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+
+            // Relleno bordo
+            ctx.fillStyle = COLOR_BORDO;
+            ctx.fill();
+            // Borde amarillo
+            ctx.strokeStyle = COLOR_AMARILLO;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Franja diagonal roja (de arriba-izquierda a abajo-derecha)
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x + w, y + h);
+            ctx.strokeStyle = COLOR_ROJO;
+            ctx.lineWidth = 6;
+            ctx.stroke();
+
+            // Estrella blanca en el centro
+            const cx = x + w / 2;
+            const cy = y + h / 2;
+            const radio = w * 0.2;
+            ctx.fillStyle = COLOR_BLANCO;
+            ctx.beginPath();
+            for (let i = 0; i < 10; i++) {
+                const angle = (i * Math.PI) / 5 - Math.PI / 2;
+                const r = i % 2 === 0 ? radio : radio * 0.4;
+                const px = cx + r * Math.cos(angle);
+                const py = cy + r * Math.sin(angle);
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+            ctx.fill();
+
+            // Texto "IPET 249" en amarillo, dentro del escudo
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = 'bold 10px sans-serif';
+            ctx.fillStyle = COLOR_AMARILLO;
+            ctx.fillText('IPET 249', x + w / 2, y + h - 8);
+        }
+
+        // =====================================================================
+        // 5.  FUNCIÓN DE DIBUJO COMPLETO (cada frame)
+        // =====================================================================
+
+        function render() {
+            // Limpiar el canvas (por si acaso, aunque dibujamos todo encima)
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+            drawBoardBackground();
+            drawHoverHighlight();
+            drawHints();
+            drawDiscs();
+            drawStatusBar();
+
+            // Si el juego terminó, podemos añadir un mensaje superpuesto
+            // pero ya se muestra en la barra de estado.
+        }
+
+        // =====================================================================
+        // 6.  MANEJADORES DE EVENTOS
+        // =====================================================================
+
+        /**
+         * Convierte coordenadas de píxel a fila/columna del tablero.
+         */
+        function pixelToGrid(px, py) {
+            if (px < 0 || py < 0 || px >= BOARD_PIXELS || py >= BOARD_PIXELS) {
+                return { row: -1, col: -1 };
+            }
+            const col = Math.floor(px / SQUARE_SIZE);
+            const row = Math.floor(py / SQUARE_SIZE);
+            return { row, col };
+        }
+
+        /**
+         * Maneja el clic del mouse: intenta colocar una ficha.
+         */
+        function handleCanvasClick(e) {
+            if (gameOver) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;   // relación de escala
+            const scaleY = canvas.height / rect.height;
+
+            const mouseCanvasX = (e.clientX - rect.left) * scaleX;
+            const mouseCanvasY = (e.clientY - rect.top) * scaleY;
+
+            const { row, col } = pixelToGrid(mouseCanvasX, mouseCanvasY);
+            if (row === -1 || col === -1) return;
+
+            // Verificar si es legal
+            const isLegal = legalMoves.some(m => m.row === row && m.col === col);
+            if (!isLegal) return;
+
+            // ---- Aplicar movimiento -----------------------------------------
+            applyMove(board, row, col, currentPlayer);
+
+            // Cambiar turno, comprobar si el oponente puede mover
+            const nextPlayer = opponentOf(currentPlayer);
+            const nextMoves = findAllLegalMoves(board, nextPlayer);
+
+            if (nextMoves.length > 0) {
+                currentPlayer = nextPlayer;
+                legalMoves = nextMoves;
+            } else {
+                // El oponente no puede mover: ver si nosotros podemos
+                const ownMoves = findAllLegalMoves(board, currentPlayer);
+                if (ownMoves.length > 0) {
+                    // Nos mantenemos, se salta el turno del oponente
+                    legalMoves = ownMoves;
+                } else {
+                    // Nadie puede mover → fin del juego
+                    const { black, white } = countDiscs(board);
+                    if (black > white) {
+                        winnerText = `¡Ganan las Negras!  ${black} - ${white}`;
+                    } else if (white > black) {
+                        winnerText = `¡Ganan las Blancas!  ${white} - ${black}`;
+                    } else {
+                        winnerText = `¡Empate!  ${black} - ${white}`;
+                    }
+                    gameOver = true;
+                    legalMoves = [];
+                }
+            }
+
+            render();
+        }
+
+        /**
+         * Maneja el movimiento del mouse para actualizar el hover.
+         */
+        function handleMouseMove(e) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+
+            const mouseCanvasX = (e.clientX - rect.left) * scaleX;
+            const mouseCanvasY = (e.clientY - rect.top) * scaleY;
+
+            mouseX = mouseCanvasX;
+            mouseY = mouseCanvasY;
+
+            const { row, col } = pixelToGrid(mouseCanvasX, mouseCanvasY);
+            hoverRow = row;
+            hoverCol = col;
+
+            render(); // redibujar para actualizar el resaltado
+        }
+
+        /**
+         * Maneja eventos de teclado: R (reiniciar), H (alternar pistas), ESC (salir).
+         */
+        function handleKeyDown(e) {
+            const key = e.key.toLowerCase();
+
+            if (key === 'r') {
+                // Reiniciar juego
+                board = createInitialBoard();
+                currentPlayer = BLACK;
+                gameOver = false;
+                winnerText = '';
+                legalMoves = findAllLegalMoves(board, currentPlayer);
+                render();
+                e.preventDefault();
+            } else if (key === 'h') {
+                showHints = !showHints;
+                render();
+                e.preventDefault();
+            } else if (key === 'escape') {
+                // No podemos "salir" en un navegador, pero podemos recargar o mostrar mensaje
+                // O simplemente ignorar, o preguntar.
+                if (confirm('¿Cerrar el juego? (Se recargará la página)')) {
+                    location.reload();
+                }
+                e.preventDefault();
+            }
+        }
+
+        // =====================================================================
+        // 7.  INICIALIZACIÓN Y BUCLE PRINCIPAL
+        // =====================================================================
+
+        /**
+         * Inicializa el estado del juego y comienza el bucle de renderizado.
+         */
+        function initGame() {
+            board = createInitialBoard();
+            currentPlayer = BLACK;
+            gameOver = false;
+            winnerText = '';
+            legalMoves = findAllLegalMoves(board, currentPlayer);
+            render();
+        }
+
+        // ---- Registrar eventos ----------------------------------------------
+        canvas.addEventListener('click', handleCanvasClick);
+        canvas.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('keydown', handleKeyDown);
+
+        // ---- Iniciar ---------------------------------------------------------
+        initGame();
+
+        // ---- (Opcional) Redibujar cuando se redimensiona la ventana ---------
+        // Como el canvas tiene tamaño fijo, no es necesario redibujar,
+        // pero si se cambia el CSS, no afecta al canvas interno.
+        // Podríamos forzar un render al cambiar tamaño, pero no es necesario.
+
+        // ---- Mensaje en consola para el desarrollador ------------------------
+        console.log('🎮 Othello / Reversi - IPET 249 Nicolás Copérnico');
+        console.log('📐 Tablero %dx%d', BOARD_SIZE, BOARD_SIZE);
+        console.log('🔘 Colores institucionales: Bordo, Amarillo, Rojo, Blanco');
+        console.log('🔄 Presiona R para reiniciar, H para alternar pistas.');
+
+        // =====================================================================
+        // FIN DEL CÓDIGO
+        // =====================================================================
+    </script>
+</body>
+</html>
